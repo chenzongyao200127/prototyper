@@ -53,6 +53,14 @@ extern "C" fn rust_main(_hart_id: usize, opaque: usize, nonstandard_a2: usize) {
         let boot_info = firmware::get_boot_info(nonstandard_a2);
         let (mpp, next_addr) = (boot_info.mpp, boot_info.next_address);
 
+        // Log boot hart ID and PMP information
+        info!("Boot HART ID              : {}", current_hartid());
+        info!(
+            "PMP Configuration         : {:#018x} - {:#018x}",
+            unsafe { PLATFORM.info.memory_range.as_ref().unwrap().start },
+            unsafe { PLATFORM.info.memory_range.as_ref().unwrap().end }
+        );
+
         // Start kernel.
         local_remote_hsm().start(NextStage {
             start_addr: next_addr,
@@ -67,7 +75,7 @@ extern "C" fn rust_main(_hart_id: usize, opaque: usize, nonstandard_a2: usize) {
             mpp
         );
     } else {
-        // 设置陷入栈
+        // Other harts task entry.
         trap_stack::prepare_for_trap();
 
         // Wait for boot hart to complete SBI initialization.
@@ -80,6 +88,11 @@ extern "C" fn rust_main(_hart_id: usize, opaque: usize, nonstandard_a2: usize) {
 
     // Detection Priv Ver
     privileged_version_detection();
+    info!(
+        "Privileged Version        : {:?}",
+        hart_privileged_version(current_hartid())
+    );
+
     // Clear all pending IPIs.
     ipi::clear_all();
 
