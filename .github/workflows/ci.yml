@@ -1,0 +1,84 @@
+name: RustSBI & U-Boot QEMU Boot CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Rust
+        uses: rust-lang/setup-rust@stable
+        with:
+          rust-version: stable
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-riscv64 \
+            gcc-riscv64-linux-gnu \
+            make \
+            unzip \
+            xz-utils \
+            git \
+            bc
+
+      - name: Clone RustSBI Prototyper and U-Boot
+        run: |
+          mkdir -p $HOME/workshop
+          cd $HOME/workshop
+
+          # Clone RustSBI Prototyper
+          git clone https://github.com/rustsbi/prototyper.git && cd prototyper && git checkout main && cd ..
+
+          # Clone U-Boot
+          git clone https://github.com/u-boot/u-boot.git && cd u-boot && git checkout v2024.04 && cd ..
+
+      - name: Download and expand Ubuntu 24.04.1 disk image
+        run: |
+          cd $HOME/workshop
+          wget https://cdimage.ubuntu.com/releases/noble/release/ubuntu-24.04.1-preinstalled-server-riscv64.img.xz
+          unar ubuntu-24.04.1-preinstalled-server-riscv64.img.xz
+          qemu-img resize -f raw ubuntu-24.04.1-preinstalled-server-riscv64.img +5G
+
+      - name: Build RustSBI Prototyper
+        run: |
+          cd $HOME/workshop/prototyper
+          cargo prototyper
+
+      - name: Build U-Boot SPL
+        run: |
+          cd $HOME/workshop/u-boot
+          export ARCH=riscv
+          export CROSS_COMPILE=riscv64-linux-gnu-
+          export OPENSBI=$HOME/workshop/prototyper/target/riscv64imac-unknown-none-elf/release/rustsbi-prototyper.bin
+          make qemu-riscv64_spl_defconfig
+          make -j$(nproc)
+
+      - name: Run QEMU to boot Ubuntu 24.04.1
+        run: |
+          cd $HOME/workshop
+          qemu-system-riscv64 \
+            -nographic -machine virt \
+            -smp 4 -m 8G \
+            -bios ./u-boot/spl/u-boot-spl \
+            -device loader,file=./u-boot/u-boot.itb,addr=0x80200000 \
+            -drive file=ubuntu-24.04.1-preinstalled-server-riscv64.img,format=raw,if=none,id=hd0 \
+            -object rng-random,filename=/dev/urandom,id=rng0 \
+            -device virtio-vga \
+            -device virtio-rng-device,rng=rng0 \
+            -device virtio-blk-device,drive=hd0 \
+            -device virtio-net-device,netdev=usernet \
+            -netdev user,id=usernet,hostfwd=tcp::12055-:22 \
+            -device qemu-xhci -usb -device usb-kbd -device usb-tablet
